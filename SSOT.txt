@@ -1,0 +1,3689 @@
+# SSOT — GolanInvite
+
+## Aplikasi Web Manajemen Undangan Digital, Pemesanan, Template, Custom Domain, RSVP, dan Ulasan
+
+**Versi:** 2.0
+**Status:** Final Architecture Baseline
+**Sifat dokumen:** Single Source of Truth / SSOT
+
+---
+
+# 0. Kedudukan Dokumen
+
+Dokumen ini merupakan **Single Source of Truth** untuk implementasi GolanInvite.
+
+Seluruh:
+
+* arsitektur;
+* frontend;
+* backend;
+* database;
+* REST API;
+* autentikasi;
+* otorisasi;
+* landing page;
+* paket;
+* template;
+* pemesanan;
+* undangan;
+* data injection;
+* custom domain;
+* DNS;
+* SSL;
+* RSVP;
+* ucapan;
+* ulasan;
+* deployment;
+* Docker;
+* keamanan;
+* logging;
+* testing;
+* dan operasional production
+
+harus mengikuti dokumen ini.
+
+Jika implementasi berbeda dengan dokumen ini, maka implementasi dianggap salah kecuali perubahan requirement terlebih dahulu dijelaskan dan SSOT diperbarui.
+
+Jangan menambahkan fitur, service, database, runtime, proses tambahan, atau dependency arsitektural di luar SSOT tanpa menjelaskan:
+
+1. alasan;
+2. manfaat;
+3. risiko;
+4. dampak;
+5. perubahan deployment;
+6. perubahan keamanan;
+7. perubahan biaya operasional.
+
+---
+
+# 1. Keputusan Arsitektur Final
+
+Keputusan berikut bersifat **final dan mengikat** untuk production.
+
+## 1.1 Production menggunakan satu Docker image
+
+Production GolanInvite harus dibangun menjadi:
+
+```text
+1 Docker Image
+```
+
+Image tersebut berisi:
+
+```text
+Go application binary
++
+embedded frontend production assets
++
+migration files apabila diperlukan
++
+runtime configuration yang tidak bersifat secret
+```
+
+---
+
+## 1.2 Production hanya menjalankan satu application process
+
+Container aplikasi production hanya menjalankan:
+
+```text
+1 Go binary
+```
+
+Tidak boleh menjalankan:
+
+```text
+Node.js server
+Next.js server
+npm start
+next start
+PM2
+supervisor untuk menjalankan frontend
+process manager untuk menjalankan Go + Node
+```
+
+Node.js hanya digunakan pada **build stage**.
+
+---
+
+## 1.3 Next.js hanya merupakan frontend/build-time framework
+
+Next.js tetap digunakan untuk membangun frontend.
+
+Namun pada production:
+
+```text
+Node.js tidak dijalankan.
+```
+
+Frontend harus menghasilkan artifact yang dapat disajikan sebagai static/client-side production assets oleh Go.
+
+Konsekuensinya:
+
+* business logic tidak boleh bergantung pada Next.js server runtime;
+* authentication tidak boleh bergantung pada Node.js;
+* database tidak boleh diakses Next.js;
+* Server Actions tidak boleh menjadi business API utama;
+* API utama tetap REST API Go;
+* SSR yang mengharuskan Node.js runtime tidak boleh menjadi requirement production;
+* fitur frontend harus dapat dijalankan menggunakan production assets yang disajikan Go.
+
+Apabila suatu fitur baru secara mutlak membutuhkan Node.js production runtime, fitur tersebut **tidak boleh langsung ditambahkan**.
+
+SSOT harus diubah terlebih dahulu.
+
+---
+
+# 2. Prinsip Runtime Utama
+
+Perubahan data bisnis **tidak boleh memerlukan restart aplikasi**.
+
+Operasi berikut harus dapat dilakukan secara runtime:
+
+```text
+Tambah user
+Edit user
+Tambah template
+Update template
+Publish versi template
+Nonaktifkan template
+Tambah undangan
+Edit undangan
+Publish undangan
+Tambah custom domain
+Update custom domain
+Verifikasi domain
+Aktifkan domain
+Nonaktifkan domain
+Ubah paket
+Ubah harga
+Ubah landing page
+Terima order
+Tolak order
+Proses order
+Data injection
+Submit RSVP
+Submit ucapan
+Moderasi ucapan
+Submit review
+Balas review
+```
+
+Semua operasi tersebut merupakan:
+
+```text
+data/configuration changes
+```
+
+bukan:
+
+```text
+application deployment
+```
+
+Karena itu:
+
+```text
+TIDAK memerlukan:
+docker build
+docker restart
+container restart
+Go restart
+Next.js rebuild
+```
+
+Restart/redeploy hanya diperlukan apabila terjadi perubahan:
+
+```text
+source code Go
+source code frontend
+dependency aplikasi
+database schema tertentu
+embedded static application assets
+system-level configuration tertentu
+```
+
+---
+
+# 3. Tujuan Sistem
+
+GolanInvite adalah platform jasa undangan digital yang menyatukan:
+
+1. landing page promosi;
+2. katalog template;
+3. paket dan harga;
+4. pemesanan;
+5. manajemen pelanggan;
+6. pembuatan undangan;
+7. data injection;
+8. preview;
+9. publikasi;
+10. custom domain;
+11. RSVP;
+12. ucapan tamu;
+13. statistik;
+14. ulasan;
+15. administrasi transaksi.
+
+Platform harus mendukung tiga kategori pengguna utama:
+
+```text
+Admin
+User / Pemilik Undangan
+Tamu Undangan
+```
+
+Tidak tersedia registrasi mandiri.
+
+Semua akun user dibuat oleh Admin.
+
+---
+
+# 4. Ruang Lingkup Produk
+
+## 4.1 Landing Page Guest
+
+Landing page minimal memiliki:
+
+* Home;
+* Fitur;
+* Tema/Katalog;
+* Harga;
+* Cara Pesan;
+* Kontak;
+* Hero;
+* fitur utama;
+* paket harga;
+* preview template;
+* katalog;
+* cara kerja;
+* ulasan;
+* FAQ;
+* footer.
+
+Admin dapat mengubah:
+
+* headline;
+* subheadline;
+* CTA;
+* fitur;
+* harga;
+* benefit paket;
+* FAQ;
+* informasi kontak;
+* konten landing;
+* informasi pembayaran jika diperlukan.
+
+---
+
+# 5. Katalog Template
+
+Katalog publik menyediakan:
+
+* daftar template;
+* kategori;
+* search;
+* preview;
+* demo;
+* informasi paket;
+* pagination.
+
+Maksimal default:
+
+```text
+10 template / halaman
+```
+
+Landing page dapat menampilkan maksimal:
+
+```text
+6 featured templates
+```
+
+Admin menentukan template yang:
+
+```text
+draft
+active
+inactive
+archived
+```
+
+Hanya template aktif yang boleh ditampilkan pada katalog publik.
+
+---
+
+# 6. Dashboard Admin
+
+Admin memiliki akses terhadap:
+
+* Dashboard;
+* Inbox Pesanan;
+* Landing Page;
+* Paket;
+* Template;
+* User;
+* Undangan;
+* Domain;
+* RSVP;
+* Ucapan;
+* Transaksi;
+* Ulasan;
+* Audit Log;
+* Pengaturan;
+* Profil.
+
+Admin adalah pengelola platform.
+
+---
+
+# 7. Dashboard User
+
+User memiliki akses terhadap:
+
+* Dashboard;
+* Profil;
+* Undangan Saya;
+* Detail Undangan;
+* Editor Undangan;
+* Preview;
+* Link/domain undangan;
+* Shop Template;
+* RSVP;
+* Ucapan;
+* Statistik;
+* Ulasan.
+
+User hanya dapat mengakses resource yang dimilikinya.
+
+---
+
+# 8. Tamu Undangan
+
+Tamu:
+
+* tidak memiliki akun;
+* tidak login;
+* membuka undangan melalui domain/subdomain;
+* dapat melihat informasi publik;
+* dapat mengisi RSVP jika aktif;
+* dapat mengirim ucapan jika aktif;
+* tidak dapat mengakses API admin;
+* tidak dapat mengakses dashboard user.
+
+---
+
+# 9. Teknologi Utama
+
+## Backend
+
+Gunakan:
+
+```text
+Go
+PostgreSQL
+REST API
+session-based authentication
+versioned migration
+structured logging
+explicit dependency injection
+```
+
+Arsitektur backend:
+
+```text
+modular monolith
+```
+
+Tidak menggunakan microservices.
+
+---
+
+## Frontend
+
+Gunakan:
+
+```text
+Next.js
+TypeScript
+App Router
+TanStack Query
+React Hook Form
+schema validation
+reusable components
+feature-based architecture
+```
+
+Next.js digunakan sebagai frontend/build system.
+
+Production frontend harus compatible dengan model:
+
+```text
+static/client application
+served by Go
+```
+
+---
+
+# 10. Tanggung Jawab Backend Go
+
+Go adalah sumber kebenaran untuk:
+
+* authentication;
+* authorization;
+* session;
+* CSRF;
+* users;
+* landing page;
+* packages;
+* orders;
+* transactions;
+* templates;
+* template versions;
+* invitations;
+* data injection;
+* domain;
+* hostname resolution;
+* RSVP;
+* greetings;
+* reviews;
+* statistics;
+* audit;
+* validation;
+* security;
+* export;
+* frontend asset serving;
+* application route fallback;
+* public invitation bootstrap.
+
+Frontend tidak boleh menjadi security boundary.
+
+---
+
+# 11. Tanggung Jawab Frontend
+
+Frontend bertanggung jawab terhadap:
+
+* presentation;
+* form;
+* navigation;
+* interaction;
+* frontend validation;
+* loading state;
+* error state;
+* server-state caching;
+* preview UI;
+* editor UI;
+* dashboard UI.
+
+Frontend tidak boleh:
+
+* mengakses PostgreSQL langsung;
+* menentukan authorization final;
+* mempercayai role tanpa verifikasi backend;
+* menyimpan secret;
+* menentukan invitation publik dari ID yang diberikan browser;
+* menjadi sumber utama perhitungan statistik.
+
+---
+
+# 12. Arsitektur Production Final
+
+```text
+                        INTERNET
+                           │
+                           ▼
+                ┌────────────────────┐
+                │ Reverse Proxy/TLS  │
+                │ Dynamic HTTPS      │
+                └─────────┬──────────┘
+                          │
+                    preserve Host
+                          │
+                          ▼
+             ┌─────────────────────────┐
+             │ GolanInvite Container   │
+             │                         │
+             │ ONE GO BINARY           │
+             │                         │
+             │ ├── REST API            │
+             │ ├── Authentication      │
+             │ ├── Authorization       │
+             │ ├── Host Resolver       │
+             │ ├── Templates           │
+             │ ├── Invitations         │
+             │ ├── RSVP                │
+             │ ├── Orders              │
+             │ ├── Reviews             │
+             │ ├── Statistics          │
+             │ └── Embedded Frontend   │
+             └────────────┬────────────┘
+                          │
+                          ▼
+                     PostgreSQL
+```
+
+Reverse proxy bukan bagian dari application process.
+
+PostgreSQL bukan bagian dari application process.
+
+---
+
+# 13. Development Architecture
+
+Development dapat menggunakan:
+
+```text
+Next.js dev server
++
+Go API server
++
+PostgreSQL
+```
+
+Contoh:
+
+```text
+localhost:3000 → Next.js
+localhost:8080 → Go
+localhost:5432 → PostgreSQL
+```
+
+Development boleh berbeda secara proses dari production.
+
+Namun behavior API dan authorization harus tetap sama.
+
+---
+
+# 14. Struktur Repository
+
+Gunakan struktur:
+
+```text
+/
+├── cmd/
+│   └── server/
+│       └── main.go
+│
+├── internal/
+│   ├── app/
+│   ├── auth/
+│   ├── users/
+│   ├── landing/
+│   ├── packages/
+│   ├── orders/
+│   ├── transactions/
+│   ├── templates/
+│   ├── invitations/
+│   ├── domains/
+│   ├── rsvp/
+│   ├── greetings/
+│   ├── reviews/
+│   ├── statistics/
+│   ├── audit/
+│   ├── settings/
+│   ├── storage/
+│   ├── database/
+│   ├── config/
+│   ├── middleware/
+│   └── validation/
+│
+├── web/
+│   ├── app/
+│   ├── components/
+│   ├── features/
+│   ├── lib/
+│   ├── hooks/
+│   ├── schemas/
+│   ├── types/
+│   ├── styles/
+│   ├── public/
+│   ├── package.json
+│   ├── next.config.ts
+│   └── tsconfig.json
+│
+├── migrations/
+├── scripts/
+├── deploy/
+├── Dockerfile
+├── compose.yaml
+├── go.mod
+├── go.sum
+├── Makefile
+├── .env.example
+└── README.md
+```
+
+---
+
+# 15. Struktur Modul Backend
+
+Setiap business module minimal:
+
+```text
+internal/{module}/
+├── entity.go
+├── repository.go
+├── repository_postgres.go
+├── service.go
+├── handler.go
+├── request.go
+├── response.go
+├── validation.go
+└── errors.go
+```
+
+HTTP handler tidak boleh memuat business logic utama.
+
+Handler hanya:
+
+```text
+read request
+→ validate transport-level input
+→ call service
+→ map result
+→ response
+```
+
+Business rule berada pada service/domain layer.
+
+---
+
+# 16. Authentication
+
+Gunakan:
+
+```text
+session-based authentication
+```
+
+Role:
+
+```text
+admin
+user
+```
+
+Tidak tersedia:
+
+```text
+public registration
+self-service registration
+```
+
+Admin membuat user.
+
+---
+
+# 17. Session Cookie
+
+Cookie session minimal harus menggunakan:
+
+```text
+HttpOnly
+Secure
+SameSite
+Path
+Max-Age atau Expires
+```
+
+Session harus mendukung:
+
+* expiration;
+* revocation;
+* logout;
+* session rotation bila diperlukan;
+* invalidation ketika akun dinonaktifkan.
+
+---
+
+# 18. Authorization
+
+Semua authorization dilakukan backend.
+
+Backend harus memeriksa:
+
+```text
+session
+role
+resource ownership
+resource state
+hostname context
+```
+
+Contoh:
+
+User tidak boleh mengakses:
+
+```text
+GET /api/v1/user/invitations/{invitationId}
+```
+
+jika `invitationId` bukan miliknya.
+
+Frontend guard hanya digunakan untuk UX.
+
+---
+
+# 19. Konsep Domain Undangan
+
+Undangan publik menggunakan:
+
+```text
+custom domain
+```
+
+atau:
+
+```text
+subdomain
+```
+
+Contoh:
+
+```text
+https://rani-dan-budi.com
+```
+
+atau:
+
+```text
+https://rani-dan-budi.undangan.example.com
+```
+
+Undangan publik **tidak menggunakan path sebagai identifier utama**.
+
+Tidak menggunakan pola utama:
+
+```text
+https://app.example.com/invitation/123
+```
+
+---
+
+# 20. Domain Aplikasi
+
+Contoh:
+
+```text
+app.example.com
+```
+
+Digunakan untuk:
+
+* landing;
+* login;
+* katalog;
+* admin;
+* dashboard user;
+* pengelolaan aplikasi.
+
+---
+
+# 21. Domain Undangan Publik
+
+Digunakan untuk:
+
+* root undangan;
+* public bootstrap;
+* RSVP;
+* greetings;
+* asset undangan.
+
+Contoh:
+
+```text
+https://rani-dan-budi.com/
+```
+
+API:
+
+```text
+GET  /api/v1/public/invitation
+POST /api/v1/public/rsvp
+POST /api/v1/public/greetings
+```
+
+Endpoint publik menentukan undangan berdasarkan hostname request.
+
+Browser tidak menentukan `invitation_id` sebagai sumber kebenaran.
+
+---
+
+# 22. Hostname Resolver
+
+Backend wajib memiliki hostname resolver.
+
+Alur:
+
+```text
+HTTP request
+→ read Host
+→ remove port
+→ lowercase
+→ remove trailing dot
+→ validate hostname
+→ determine host type
+→ database lookup
+→ attach HostContext
+```
+
+Contoh:
+
+```go
+type HostContext struct {
+    Type         HostType
+    Hostname     string
+    InvitationID *uuid.UUID
+    DomainID     *uuid.UUID
+}
+```
+
+Host type:
+
+```text
+application
+public_invitation
+unknown
+```
+
+Hostname tidak dikenal harus ditolak.
+
+---
+
+# 23. Aturan Host Header
+
+Jangan mempercayai:
+
+```text
+X-Forwarded-Host
+X-Forwarded-For
+Forwarded
+```
+
+kecuali request berasal dari trusted proxy.
+
+Trusted proxy diatur melalui configuration.
+
+Host header harus divalidasi.
+
+---
+
+# 24. Database Domain
+
+Table:
+
+```text
+invitation_domains
+```
+
+Minimal:
+
+```text
+id
+invitation_id
+hostname
+normalized_hostname
+is_primary
+status
+dns_verified_at
+ssl_status
+ssl_verified_at
+last_checked_at
+failure_reason
+created_at
+updated_at
+```
+
+Unique constraint:
+
+```text
+normalized_hostname UNIQUE
+```
+
+Satu hostname hanya boleh dimiliki satu undangan.
+
+---
+
+# 25. Status Domain
+
+Gunakan:
+
+```text
+pending
+dns_verified
+ssl_pending
+active
+failed
+disabled
+```
+
+Domain hanya boleh digunakan sebagai public invitation jika:
+
+```text
+status = active
+```
+
+---
+
+# 26. Dynamic Domain — Tidak Memerlukan Restart
+
+Penambahan domain harus bekerja seperti:
+
+```text
+Admin
+→ Create Domain
+→ PostgreSQL
+→ status pending
+→ DNS verification
+→ TLS provisioning
+→ HTTPS verification
+→ status active
+```
+
+Tidak boleh ada langkah:
+
+```text
+restart Go
+restart container
+rebuild Docker
+rebuild frontend
+```
+
+Go membaca domain dari database saat runtime.
+
+Jika hostname resolution menggunakan cache, sistem harus:
+
+* melakukan invalidation setelah domain berubah; atau
+* menggunakan TTL terbatas.
+
+Cache tidak boleh membuat domain baru membutuhkan restart.
+
+---
+
+# 27. DNS
+
+Root domain:
+
+```text
+Type: A
+Name: @
+Value: SERVER_PUBLIC_IP
+```
+
+Subdomain dapat menggunakan:
+
+```text
+Type: CNAME
+Name: invite
+Value: PUBLIC_INGRESS_DOMAIN
+```
+
+Sistem harus memberikan instruksi DNS sesuai hostname.
+
+Domain belum boleh aktif sebelum DNS tervalidasi.
+
+---
+
+# 28. SSL / HTTPS
+
+Semua domain aktif wajib menggunakan HTTPS.
+
+Reverse proxy/certificate layer harus mendukung:
+
+* multiple hostnames;
+* dynamic domain;
+* automatic certificate issuance;
+* automatic certificate renewal;
+* hot reload;
+* Host preservation.
+
+**Penambahan SSL/domain tidak boleh membutuhkan restart aplikasi Go.**
+
+Proxy diperbolehkan melakukan dynamic configuration/hot reload tanpa menghentikan application container.
+
+Private key TLS tidak disimpan pada database aplikasi.
+
+Database hanya menyimpan status SSL.
+
+---
+
+# 29. Lifecycle Domain
+
+```text
+Admin menambahkan hostname
+        ↓
+status = pending
+        ↓
+customer/admin mengatur DNS
+        ↓
+DNS verification
+        ↓
+status = dns_verified
+        ↓
+TLS request
+        ↓
+status = ssl_pending
+        ↓
+HTTPS verification
+        ↓
+status = active
+```
+
+Jika gagal:
+
+```text
+status = failed
+failure_reason = ...
+```
+
+---
+
+# 30. Template Architecture
+
+Template adalah **runtime data**, bukan application source code.
+
+Template tidak boleh diwajibkan menjadi:
+
+```text
+React component yang harus di-import saat compile
+```
+
+karena model tersebut menyebabkan setiap template baru memerlukan rebuild.
+
+Template harus dapat dibuat, disimpan, diubah, versioned, dan dipublikasikan melalui Admin.
+
+---
+
+# 31. Data Template
+
+Minimal:
+
+```text
+id
+name
+slug
+description
+category
+thumbnail_url
+version
+schema
+theme_config
+status
+created_at
+updated_at
+```
+
+Status:
+
+```text
+draft
+active
+inactive
+archived
+```
+
+---
+
+# 32. Template Version
+
+Gunakan versioning.
+
+Table:
+
+```text
+template_versions
+```
+
+Minimal:
+
+```text
+id
+template_id
+version
+schema
+theme_config
+render_definition
+created_by
+created_at
+```
+
+Version yang sudah digunakan undangan tidak boleh dimodifikasi secara destruktif.
+
+Buat versi baru.
+
+---
+
+# 33. Template Renderer
+
+Template sebaiknya menggunakan pendekatan:
+
+```text
+schema-driven renderer
++
+reusable frontend components
++
+theme configuration
+```
+
+Contoh template schema:
+
+```json
+{
+  "sections": [
+    {
+      "type": "cover",
+      "enabled": true
+    },
+    {
+      "type": "couple",
+      "enabled": true
+    },
+    {
+      "type": "event",
+      "enabled": true
+    },
+    {
+      "type": "gallery",
+      "enabled": true
+    },
+    {
+      "type": "rsvp",
+      "enabled": true
+    }
+  ]
+}
+```
+
+Frontend memiliki renderer section reusable.
+
+Contoh:
+
+```text
+cover
+couple
+event
+story
+gallery
+video
+maps
+countdown
+gift
+rsvp
+greetings
+closing
+```
+
+---
+
+# 34. HTML/CSS/JS Template
+
+Jika template mendukung custom HTML/CSS/JS, implementasi harus memperhatikan security.
+
+Tidak boleh menjalankan:
+
+```text
+arbitrary trusted server code
+```
+
+Template tidak boleh dapat:
+
+* membaca session admin;
+* membaca session user;
+* menjalankan server command;
+* mengakses filesystem server;
+* mengakses PostgreSQL;
+* memasukkan arbitrary backend code.
+
+Custom client-side code harus dibatasi, divalidasi, dan disanitasi sesuai model keamanan yang dipilih.
+
+Pendekatan utama tetap:
+
+```text
+schema
++
+approved reusable renderer
+```
+
+daripada arbitrary executable code.
+
+---
+
+# 35. Template Placeholder
+
+Template dapat menggunakan placeholder seperti:
+
+```text
+{{nama_pria}}
+{{nama_wanita}}
+{{tanggal_acara}}
+{{lokasi_alamat}}
+{{link_gmap}}
+{{gallery_photos}}
+{{video_url}}
+{{catatan_tambahan}}
+```
+
+Placeholder harus memiliki schema.
+
+Input harus divalidasi berdasarkan tipe.
+
+Contoh:
+
+```text
+string
+date
+url
+image[]
+rich_text
+boolean
+number
+```
+
+---
+
+# 36. Dynamic Template Deployment
+
+Deploy template berarti:
+
+```text
+create/update template data
+```
+
+bukan:
+
+```text
+application deploy
+```
+
+Lifecycle:
+
+```text
+Admin membuat template
+        ↓
+validation
+        ↓
+save template draft
+        ↓
+preview
+        ↓
+publish version
+        ↓
+template active
+        ↓
+langsung tersedia
+```
+
+Tidak melakukan:
+
+```text
+npm build
+next build
+go build
+docker build
+docker restart
+```
+
+---
+
+# 37. Perubahan Renderer
+
+Perbedaan penting:
+
+### Menambah template dari renderer yang sudah ada
+
+Contoh:
+
+```text
+Cover
+Couple
+Event
+Gallery
+RSVP
+```
+
+dengan layout/config baru:
+
+```text
+NO REBUILD
+```
+
+### Menambah jenis section frontend baru
+
+Contoh:
+
+```text
+Interactive3DSection
+```
+
+yang belum tersedia di aplikasi:
+
+```text
+CODE CHANGE
+→ build
+→ deploy
+```
+
+Jadi:
+
+```text
+new template configuration ≠ application deploy
+
+new renderer/component capability = application deploy
+```
+
+---
+
+# 38. Snapshot Template
+
+Saat undangan dibuat:
+
+```text
+template version
+→ snapshot
+→ invitation
+```
+
+Perubahan template master tidak boleh otomatis mengubah undangan existing.
+
+Undangan menyimpan:
+
+```text
+template_id
+template_version_id
+content snapshot
+theme_config snapshot
+```
+
+Jika ingin upgrade template suatu undangan, harus ada operasi eksplisit.
+
+---
+
+# 39. Section Permission
+
+Section template dapat memiliki:
+
+```text
+locked
+editable
+optional
+hidden
+```
+
+Admin menentukan hak edit.
+
+User hanya mengubah field yang diizinkan.
+
+---
+
+# 40. Manajemen Undangan
+
+Minimal:
+
+```text
+id
+user_id
+template_id
+template_version_id
+title
+status
+start_at
+end_at
+rsvp_enabled
+greeting_enabled
+content
+theme_config
+published_at
+created_at
+updated_at
+```
+
+Status:
+
+```text
+draft
+scheduled
+active
+expired
+disabled
+```
+
+---
+
+# 41. Aturan Undangan
+
+1. Undangan dibuat dari template.
+2. Template harus memiliki snapshot.
+3. User hanya mengubah field yang diperbolehkan.
+4. Admin dapat mengubah struktur sesuai authorization.
+5. Domain harus aktif sebelum publikasi.
+6. Undangan harus berada dalam periode aktif.
+7. Admin dapat menonaktifkan undangan.
+8. Undangan expired tidak boleh tampil sebagai undangan aktif.
+
+---
+
+# 42. Validasi Periode
+
+Public invitation tersedia apabila:
+
+```text
+domain.status = active
+AND invitation.status = active
+AND current_time >= start_at
+AND current_time <= end_at
+```
+
+Jika belum dimulai:
+
+```text
+Undangan belum tersedia
+```
+
+Jika expired:
+
+```text
+Masa aktif undangan telah berakhir
+```
+
+Jika disabled:
+
+```text
+Undangan tidak tersedia
+```
+
+Jika hostname tidak dikenal:
+
+```text
+Domain undangan tidak ditemukan
+```
+
+---
+
+# 43. Landing Page Management
+
+Konten landing page harus berasal dari backend/database.
+
+Admin dapat mengubah konten tanpa rebuild aplikasi.
+
+Data dapat mencakup:
+
+```text
+hero
+features
+how_it_works
+featured_templates
+FAQ
+contact
+footer
+SEO configuration
+```
+
+Update landing page:
+
+```text
+database update
+→ cache invalidation
+→ langsung tersedia
+```
+
+Tidak memerlukan restart.
+
+---
+
+# 44. Packages
+
+Admin dapat CRUD paket.
+
+Minimal:
+
+```text
+id
+name
+description
+price
+benefits
+is_active
+display_order
+created_at
+updated_at
+```
+
+Harga dan benefit tidak boleh hardcoded di frontend.
+
+Frontend membaca dari API.
+
+---
+
+# 45. Order / Pesanan
+
+Status minimal:
+
+```text
+pending
+processing
+accepted
+rejected
+completed
+cancelled
+```
+
+Order dapat menyimpan:
+
+* user;
+* template;
+* package;
+* data pembeli;
+* data pasangan;
+* data orang tua;
+* detail acara;
+* additional event;
+* gallery/media;
+* payment method;
+* proof of payment;
+* note.
+
+---
+
+# 46. Alur Order
+
+```text
+User memilih template
+→ pilih paket
+→ isi form
+→ upload bukti
+→ submit order
+→ pending
+→ Admin review
+```
+
+Admin dapat:
+
+```text
+accept
+reject
+process
+inject data
+preview
+publish
+complete
+```
+
+Order completed/rejected masuk riwayat.
+
+---
+
+# 47. Transaction
+
+Riwayat transaksi minimal memuat:
+
+```text
+id
+order_id
+user_id
+amount
+payment_method
+payment_reference
+status
+proof_url
+verified_by
+verified_at
+created_at
+updated_at
+```
+
+Status pembayaran ditentukan backend/admin.
+
+Jangan mempercayai nominal atau status pembayaran dari frontend.
+
+---
+
+# 48. User Management
+
+Admin dapat:
+
+* membuat user;
+* melihat user;
+* mengubah user;
+* menonaktifkan user;
+* mengaktifkan user;
+* reset credential melalui alur aman;
+* melihat resource milik user.
+
+Tidak ada endpoint register publik.
+
+---
+
+# 49. RSVP
+
+Field default:
+
+* nama tamu;
+* nomor telepon opsional;
+* status kehadiran;
+* jumlah tamu;
+* ucapan.
+
+Status kehadiran:
+
+```text
+attending
+not_attending
+unsure
+```
+
+---
+
+# 50. Aturan RSVP
+
+1. RSVP hanya tersedia jika aktif.
+2. Jumlah tamu hanya berlaku ketika attending.
+3. Guest count minimal 1 ketika attending.
+4. Admin dapat menentukan maksimum.
+5. Frontend melakukan UX validation.
+6. Backend melakukan authoritative validation.
+7. Submission disimpan ke PostgreSQL.
+8. Submission berulang harus dibatasi.
+9. Rate limit diterapkan.
+
+---
+
+# 51. Pencegahan RSVP Duplikat
+
+Dapat menggunakan:
+
+```text
+guest_code
+unique token
+phone
+identity combination
+rate limiting
+limited fingerprint
+```
+
+Jangan hanya menggunakan IP address.
+
+Mode:
+
+```text
+open
+token_required
+single_response
+response_editable
+```
+
+Untuk single response gunakan database constraint jika memungkinkan.
+
+---
+
+# 52. Data RSVP
+
+Minimal:
+
+```text
+id
+invitation_id
+guest_code
+guest_name
+phone_number
+attendance_status
+guest_count
+message
+source_ip_hash
+user_agent
+submitted_at
+updated_at
+```
+
+Index:
+
+```text
+invitation_id
+attendance_status
+guest_name
+submitted_at
+```
+
+---
+
+# 53. Greetings
+
+Data minimal:
+
+```text
+id
+invitation_id
+guest_name
+message
+status
+created_at
+updated_at
+```
+
+Status:
+
+```text
+pending
+approved
+hidden
+rejected
+```
+
+Jika moderasi aktif, hanya:
+
+```text
+approved
+```
+
+yang tampil publik.
+
+---
+
+# 54. RSVP Statistics
+
+Backend menghitung:
+
+* total response;
+* attending;
+* not attending;
+* unsure;
+* total estimated guests;
+* unanswered;
+* attendance percentage;
+* responses over time.
+
+Frontend tidak menghitung statistik utama dari subset table yang sedang terlihat.
+
+---
+
+# 55. Review / Ulasan
+
+User dapat memberikan ulasan.
+
+Minimal:
+
+```text
+id
+user_id
+invitation_id
+rating
+message
+display_name
+is_anonymous
+status
+admin_reply
+created_at
+updated_at
+```
+
+Admin dapat:
+
+* melihat;
+* moderasi;
+* membalas.
+
+Landing page hanya menampilkan review yang memenuhi status publik.
+
+---
+
+# 56. Database
+
+Minimal table:
+
+```text
+users
+sessions
+
+landing_sections
+packages
+
+orders
+order_details
+transactions
+
+templates
+template_versions
+
+invitations
+invitation_domains
+invitation_contents
+
+rsvp_forms
+rsvp_fields
+rsvp_responses
+
+guest_messages
+reviews
+
+audit_logs
+application_settings
+```
+
+Implementasi boleh memecah table lebih jauh jika diperlukan.
+
+---
+
+# 57. Database Rules
+
+Gunakan:
+
+```text
+foreign key
+unique constraint
+check constraint
+index
+transaction
+UTC timestamp
+versioned migration
+```
+
+Operasi penting harus transactional.
+
+---
+
+# 58. Unique Constraint
+
+Minimal:
+
+```text
+users.email
+invitation_domains.normalized_hostname
+```
+
+Untuk RSVP sesuai mode:
+
+```text
+invitation_id + guest_code
+```
+
+dapat menjadi unique constraint.
+
+---
+
+# 59. REST API
+
+Base:
+
+```text
+/api/v1
+```
+
+Group:
+
+```text
+/api/v1/auth
+/api/v1/admin
+/api/v1/user
+/api/v1/public
+```
+
+---
+
+# 60. Auth API
+
+```text
+POST /api/v1/auth/login
+POST /api/v1/auth/logout
+GET  /api/v1/auth/session
+```
+
+Tidak tersedia:
+
+```text
+POST /register
+```
+
+---
+
+# 61. Context API
+
+Sediakan:
+
+```text
+GET /api/v1/context
+```
+
+Response berdasarkan hostname.
+
+Application:
+
+```json
+{
+  "type": "application"
+}
+```
+
+Public invitation:
+
+```json
+{
+  "type": "public_invitation"
+}
+```
+
+Context publik hanya mengembalikan informasi yang aman.
+
+---
+
+# 62. Admin User API
+
+```text
+GET    /api/v1/admin/users
+POST   /api/v1/admin/users
+GET    /api/v1/admin/users/:id
+PATCH  /api/v1/admin/users/:id
+DELETE /api/v1/admin/users/:id
+```
+
+Delete dapat berupa soft delete/deactivate sesuai implementasi.
+
+---
+
+# 63. Admin Template API
+
+```text
+GET    /api/v1/admin/templates
+POST   /api/v1/admin/templates
+GET    /api/v1/admin/templates/:id
+PATCH  /api/v1/admin/templates/:id
+DELETE /api/v1/admin/templates/:id
+
+GET    /api/v1/admin/templates/:id/versions
+POST   /api/v1/admin/templates/:id/versions
+POST   /api/v1/admin/templates/:id/publish
+```
+
+---
+
+# 64. Admin Invitation API
+
+```text
+GET    /api/v1/admin/invitations
+POST   /api/v1/admin/invitations
+GET    /api/v1/admin/invitations/:id
+PATCH  /api/v1/admin/invitations/:id
+DELETE /api/v1/admin/invitations/:id
+POST   /api/v1/admin/invitations/:id/publish
+```
+
+---
+
+# 65. Admin Domain API
+
+```text
+GET    /api/v1/admin/domains
+POST   /api/v1/admin/domains
+GET    /api/v1/admin/domains/:id
+PATCH  /api/v1/admin/domains/:id
+DELETE /api/v1/admin/domains/:id
+
+POST /api/v1/admin/domains/:id/verify-dns
+POST /api/v1/admin/domains/:id/verify-ssl
+POST /api/v1/admin/domains/:id/activate
+POST /api/v1/admin/domains/:id/disable
+```
+
+---
+
+# 66. Landing & Package API
+
+Public:
+
+```text
+GET /api/v1/public/landing
+GET /api/v1/public/packages
+GET /api/v1/public/templates
+GET /api/v1/public/templates/:id
+```
+
+Admin:
+
+```text
+GET   /api/v1/admin/landing
+PATCH /api/v1/admin/landing
+
+GET    /api/v1/admin/packages
+POST   /api/v1/admin/packages
+PATCH  /api/v1/admin/packages/:id
+DELETE /api/v1/admin/packages/:id
+```
+
+---
+
+# 67. Order API
+
+User:
+
+```text
+GET  /api/v1/user/orders
+POST /api/v1/user/orders
+GET  /api/v1/user/orders/:id
+```
+
+Admin:
+
+```text
+GET   /api/v1/admin/orders
+GET   /api/v1/admin/orders/:id
+PATCH /api/v1/admin/orders/:id/status
+```
+
+Authorization tetap backend.
+
+---
+
+# 68. User Invitation API
+
+```text
+GET   /api/v1/user/invitations
+GET   /api/v1/user/invitations/:id
+PATCH /api/v1/user/invitations/:id
+
+GET /api/v1/user/invitations/:id/rsvp
+GET /api/v1/user/invitations/:id/greetings
+GET /api/v1/user/invitations/:id/statistics
+```
+
+---
+
+# 69. Public Invitation API
+
+Pada custom invitation hostname:
+
+```text
+GET  /api/v1/public/invitation
+POST /api/v1/public/rsvp
+POST /api/v1/public/greetings
+```
+
+Backend menentukan invitation berdasarkan:
+
+```text
+HostContext.InvitationID
+```
+
+Bukan berdasarkan ID dari browser.
+
+---
+
+# 70. Error Response
+
+Gunakan format:
+
+```json
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Data yang dikirim tidak valid",
+    "fields": {
+      "guest_name": "Nama tamu wajib diisi"
+    }
+  }
+}
+```
+
+Jangan mengirim:
+
+```text
+stack trace
+SQL
+filesystem path
+secret
+database credential
+session token
+environment content
+```
+
+---
+
+# 71. Frontend Server State
+
+Gunakan TanStack Query untuk:
+
+```text
+fetching
+cache
+mutation
+invalidation
+loading
+error state
+```
+
+Data backend utama tidak perlu diduplikasi ke global store.
+
+---
+
+# 72. Frontend Form
+
+Gunakan:
+
+```text
+React Hook Form
++
+schema validation
+```
+
+Frontend validation hanya untuk UX.
+
+Backend tetap authoritative.
+
+---
+
+# 73. Frontend Routing
+
+Application domain minimal:
+
+```text
+/
+/login
+/katalog
+
+/admin
+/admin/pesanan
+/admin/landing
+/admin/templates
+/admin/users
+/admin/transaksi
+/admin/ulasan
+/admin/profil
+
+/dashboard
+/dashboard/profil
+/dashboard/undangan
+/dashboard/shop
+/dashboard/ulasan
+```
+
+Detail dapat menggunakan dynamic route atau query-based route selama production static application shell dapat dilayani Go dengan benar.
+
+Contoh:
+
+```text
+/dashboard/undangan/{id}
+```
+
+atau:
+
+```text
+/dashboard/undangan/detail?id={id}
+```
+
+Pemilihan harus konsisten.
+
+Public invitation tetap menggunakan:
+
+```text
+/
+```
+
+pada invitation hostname.
+
+---
+
+# 74. Application Shell Fallback
+
+Untuk route frontend non-API:
+
+```text
+Go
+→ cari embedded frontend asset
+→ jika route frontend valid, serve frontend shell
+```
+
+API route tidak boleh terkena SPA fallback.
+
+Urutan:
+
+```text
+/api/* → API router
+known static assets → static asset
+known frontend route → frontend shell
+unknown → 404
+```
+
+Jangan membuat semua 404 menjadi frontend 200 secara membabi buta.
+
+---
+
+# 75. Build Flow
+
+Frontend:
+
+```text
+Node.js build stage
+→ install locked dependencies
+→ lint
+→ typecheck
+→ test
+→ build production frontend
+→ output embeddable assets
+```
+
+Backend:
+
+```text
+Go build stage
+→ format check
+→ vet/static analysis
+→ test
+→ copy frontend artifact
+→ embed frontend
+→ build Go binary
+```
+
+Runtime:
+
+```text
+minimal Linux image
+→ copy Go binary
+→ run non-root
+```
+
+---
+
+# 76. Docker Multi-Stage
+
+Konsep:
+
+```dockerfile
+FROM node AS frontend-builder
+
+# install
+# lint
+# typecheck
+# test
+# build frontend
+
+
+FROM golang AS backend-builder
+
+# copy Go source
+# copy frontend artifacts
+# run Go tests
+# build server binary
+
+
+FROM minimal-runtime
+
+COPY --from=backend-builder /server /server
+
+USER nonroot
+
+ENTRYPOINT ["/server"]
+```
+
+Final image tidak boleh memiliki:
+
+```text
+Go compiler
+npm
+development dependencies
+frontend source yang tidak dibutuhkan
+build credentials
+secret
+```
+
+---
+
+# 77. Kontrak Container Production
+
+Container application wajib:
+
+```text
+1 image
+1 binary
+1 application process
+```
+
+Health endpoint:
+
+```text
+GET /health/live
+GET /health/ready
+```
+
+`ready` minimal memeriksa database.
+
+---
+
+# 78. Database Migration
+
+Migration harus versioned.
+
+Migration tidak boleh dilakukan secara tidak terkendali setiap request.
+
+Deployment harus memiliki proses eksplisit:
+
+```text
+backup bila diperlukan
+→ migration
+→ compatibility check
+→ application startup/deploy
+```
+
+Untuk zero/minimal downtime, perubahan schema sebaiknya backward compatible bila memungkinkan.
+
+---
+
+# 79. Environment Variables
+
+Contoh:
+
+```env
+APP_ENV=production
+APP_NAME=GolanInvite
+
+APP_HOST=0.0.0.0
+APP_PORT=8080
+
+APP_DOMAIN=app.example.com
+APP_BASE_URL=https://app.example.com
+
+PUBLIC_BASE_DOMAIN=undangan.example.com
+PUBLIC_INGRESS_DOMAIN=invitation-host.example.com
+SERVER_PUBLIC_IP=
+
+DATABASE_URL=
+
+SESSION_SECRET=
+CSRF_SECRET=
+ENCRYPTION_KEY=
+
+TRUSTED_PROXY_CIDRS=
+ALLOWED_ORIGINS=https://app.example.com
+
+DOMAIN_VERIFICATION_ENABLED=true
+SSL_AUTOMATION_ENABLED=true
+
+MAX_UPLOAD_SIZE_MB=10
+LOG_LEVEL=info
+```
+
+Production secret tidak boleh memiliki unsafe default.
+
+---
+
+# 80. Secret
+
+Secret tidak boleh:
+
+* masuk Git;
+* di-embed ke frontend;
+* masuk Docker image;
+* tercatat di log;
+* dikirim melalui public API.
+
+Secret diberikan saat runtime melalui environment/secret manager.
+
+---
+
+# 81. Same-Origin API
+
+Frontend menggunakan:
+
+```ts
+fetch('/api/v1/auth/session')
+```
+
+Bukan:
+
+```text
+hardcoded internal Go URL
+```
+
+Keuntungan:
+
+* session cookie sederhana;
+* tidak mengekspos backend internal;
+* mengurangi CORS complexity.
+
+---
+
+# 82. CORS
+
+Jika same-origin:
+
+```text
+CORS cross-origin tidak diperlukan untuk flow normal
+```
+
+Jika suatu origin tambahan dibutuhkan:
+
+* allowlist eksplisit;
+* jangan wildcard untuk credentialed request.
+
+---
+
+# 83. Reverse Proxy
+
+Reverse proxy wajib:
+
+1. menerima banyak hostname;
+2. HTTPS;
+3. dynamic certificates;
+4. certificate renewal;
+5. preserve Host;
+6. trusted client IP forwarding;
+7. request size limit;
+8. timeout;
+9. security headers;
+10. menolak host yang tidak diizinkan.
+
+Application port tidak perlu diekspos langsung ke internet.
+
+---
+
+# 84. Unknown Host
+
+Hostname tidak dikenal:
+
+```text
+→ jangan diarahkan ke invitation default
+→ jangan diarahkan ke application dashboard
+→ return domain-not-found
+```
+
+Backend tetap melakukan validasi sendiri walaupun reverse proxy juga melakukan validasi.
+
+---
+
+# 85. Security
+
+Minimal:
+
+```text
+password hashing
+session security
+CSRF protection
+CSP
+output escaping
+rate limiting
+origin validation
+Host validation
+parameterized SQL
+upload validation
+MIME validation
+file-size limit
+body-size limit
+session revocation
+audit logging
+brute-force protection
+secret management
+security headers
+backup
+```
+
+---
+
+# 86. Template Security
+
+Template dianggap sebagai untrusted/configurable content.
+
+Harus mencegah:
+
+```text
+XSS
+script injection
+HTML injection yang berbahaya
+unsafe URL schemes
+session theft
+admin credential exposure
+```
+
+Jangan menganggap template aman hanya karena dibuat Admin.
+
+---
+
+# 87. Upload Security
+
+Upload harus memiliki:
+
+* MIME validation;
+* extension validation jika relevan;
+* size limit;
+* filename normalization;
+* random storage name;
+* authorization;
+* safe content serving.
+
+Upload tidak boleh dapat menimpa binary/server file.
+
+---
+
+# 88. Audit Log
+
+Catat minimal:
+
+* login sukses;
+* login gagal;
+* logout;
+* create/update/disable user;
+* create template;
+* publish template;
+* update template;
+* create invitation;
+* update invitation;
+* publish invitation;
+* add domain;
+* verify DNS;
+* SSL activation;
+* domain activation;
+* RSVP settings change;
+* export;
+* delete;
+* package change;
+* transaction verification;
+* order status change;
+* application setting change.
+
+---
+
+# 89. Audit Data
+
+Minimal:
+
+```text
+id
+actor_user_id
+actor_role
+action
+entity_type
+entity_id
+metadata
+ip_address_hash
+created_at
+```
+
+Jangan simpan:
+
+```text
+password
+session
+CSRF token
+private key
+secret
+```
+
+---
+
+# 90. Structured Logging
+
+Minimal field:
+
+```text
+request_id
+hostname
+method
+route
+status_code
+duration_ms
+actor_id
+actor_role
+invitation_id
+error_code
+```
+
+Jangan log:
+
+* password;
+* cookie;
+* session token;
+* CSRF token;
+* secret;
+* full payment credential;
+* full phone number jika tidak diperlukan.
+
+---
+
+# 91. Testing Backend
+
+Minimal:
+
+* service unit test;
+* repository integration test;
+* handler test;
+* authentication;
+* authorization;
+* ownership;
+* domain resolution;
+* unknown domain;
+* RSVP validation;
+* duplicate RSVP;
+* invitation active period;
+* template version;
+* template snapshot;
+* order status;
+* application fallback;
+* API-vs-frontend fallback.
+
+---
+
+# 92. Testing Frontend
+
+Minimal:
+
+* components;
+* forms;
+* validation;
+* query hooks;
+* authentication UX;
+* route guard;
+* invitation renderer;
+* template renderer;
+* RSVP;
+* conditional guest count;
+* order form;
+* domain status;
+* error state.
+
+---
+
+# 93. End-to-End Testing
+
+Minimal flow:
+
+```text
+Admin login
+→ create user
+→ create package
+→ create template
+→ publish template
+→ create invitation
+→ assign user
+→ add domain
+→ verify DNS
+→ verify SSL
+→ activate domain
+→ User login
+→ edit allowed content
+→ preview
+→ invitation publish
+→ Guest opens custom domain
+→ Guest submits RSVP
+→ Guest submits greeting
+→ User views RSVP
+→ User views statistics
+→ Admin views audit log
+```
+
+---
+
+# 94. Dynamic Runtime Test
+
+Wajib terdapat test yang membuktikan:
+
+### Template
+
+```text
+application running
+→ create template
+→ publish template
+→ access template
+→ SUCCESS
+→ PID/container tidak berubah
+```
+
+### Domain
+
+```text
+application running
+→ add domain
+→ verify
+→ activate
+→ request domain
+→ SUCCESS
+→ PID/container tidak berubah
+```
+
+Ini menjadi acceptance criteria production.
+
+---
+
+# 95. Deployment Rules
+
+Deployment aplikasi hanya dilakukan untuk perubahan application artifact.
+
+Contoh:
+
+```text
+Go code changed
+Frontend code changed
+dependency changed
+renderer capability changed
+migration requiring release changed
+```
+
+Template content tidak termasuk application deployment.
+
+Domain tidak termasuk application deployment.
+
+---
+
+# 96. Application Deployment Flow
+
+```text
+source
+→ CI
+→ backend tests
+→ frontend tests
+→ frontend build
+→ Go build with embedded frontend
+→ Docker image
+→ security checks
+→ deploy
+→ migration where required
+→ readiness
+→ traffic
+```
+
+---
+
+# 97. Template Deployment Flow
+
+```text
+Admin UI
+→ API
+→ validation
+→ template version
+→ preview
+→ publish
+→ runtime availability
+```
+
+Tidak menghasilkan Docker image baru.
+
+---
+
+# 98. Domain Deployment Flow
+
+Istilah yang lebih tepat bukan "deploy domain", tetapi:
+
+```text
+provision domain
+```
+
+Flow:
+
+```text
+Admin adds hostname
+→ database
+→ DNS instructions
+→ verification
+→ TLS
+→ HTTPS verification
+→ active
+```
+
+Tidak menghasilkan Docker image baru.
+
+---
+
+# 99. Restart Matrix
+
+| Perubahan                       | Restart/Rebuild                 |
+| ------------------------------- | ------------------------------- |
+| Tambah user                     | Tidak                           |
+| Edit user                       | Tidak                           |
+| Tambah template                 | Tidak                           |
+| Edit template                   | Tidak                           |
+| Publish template version        | Tidak                           |
+| Tambah invitation               | Tidak                           |
+| Edit invitation content         | Tidak                           |
+| Tambah domain                   | Tidak                           |
+| Verifikasi DNS                  | Tidak                           |
+| SSL provisioning                | Tidak                           |
+| Aktivasi domain                 | Tidak                           |
+| Ubah package                    | Tidak                           |
+| Ubah harga                      | Tidak                           |
+| Ubah landing content            | Tidak                           |
+| Order baru                      | Tidak                           |
+| RSVP baru                       | Tidak                           |
+| Review baru                     | Tidak                           |
+| Ubah Go source                  | Ya                              |
+| Ubah frontend source            | Ya                              |
+| Tambah renderer baru            | Ya                              |
+| Ubah dependency                 | Ya                              |
+| Ubah embedded application asset | Ya                              |
+| Schema migration tertentu       | Deployment/migration diperlukan |
+
+---
+
+# 100. Performance Principles
+
+Backend sebaiknya tidak melakukan expensive work berulang tanpa kebutuhan.
+
+Dapat menggunakan caching untuk:
+
+* landing;
+* package;
+* template metadata;
+* hostname resolution;
+* public invitation data.
+
+Namun cache harus memiliki invalidation.
+
+Runtime configuration tidak boleh bergantung pada restart untuk refresh cache.
+
+---
+
+# 101. Domain Cache
+
+Jika hostname resolver menggunakan cache:
+
+```text
+hostname → HostContext
+```
+
+setelah admin mengubah domain:
+
+```text
+database transaction
+→ commit
+→ invalidate hostname cache
+```
+
+TTL tetap digunakan sebagai fallback.
+
+Tidak boleh menggunakan cache permanen sampai restart.
+
+---
+
+# 102. Template Cache
+
+Jika template menggunakan cache:
+
+```text
+template/version → renderer data
+```
+
+publish/update harus menginvalidasi cache terkait.
+
+Template baru harus tersedia tanpa restart.
+
+---
+
+# 103. Transaction Principles
+
+Gunakan transaction untuk operasi seperti:
+
+```text
+create invitation + snapshot
+publish template
+assign domain
+activate invitation
+order processing
+transaction verification
+```
+
+Jangan meninggalkan partial state yang tidak konsisten.
+
+---
+
+# 104. Concurrency
+
+Gunakan database constraint dan transaction untuk mencegah race condition.
+
+Contoh:
+
+* duplicate hostname;
+* duplicate RSVP;
+* template version number;
+* payment/order state transition.
+
+Validation aplikasi saja tidak cukup.
+
+---
+
+# 105. State Transition
+
+Status penting harus memiliki transition yang jelas.
+
+Contoh domain:
+
+```text
+pending
+→ dns_verified
+→ ssl_pending
+→ active
+```
+
+Tidak boleh:
+
+```text
+pending
+→ active
+```
+
+tanpa verification jika domain verification diaktifkan.
+
+---
+
+# 106. Order State Transition
+
+Contoh:
+
+```text
+pending
+→ accepted
+→ processing
+→ completed
+```
+
+atau:
+
+```text
+pending
+→ rejected
+```
+
+Transition harus divalidasi backend.
+
+---
+
+# 107. Template State Transition
+
+```text
+draft
+→ active
+→ inactive
+→ archived
+```
+
+Versi published tidak boleh dimodifikasi secara destruktif.
+
+---
+
+# 108. Invitation State Transition
+
+```text
+draft
+→ scheduled
+→ active
+→ expired
+```
+
+atau:
+
+```text
+active
+→ disabled
+```
+
+Backend menentukan valid transition.
+
+---
+
+# 109. Data Time
+
+Gunakan UTC di database.
+
+Konversi timezone dilakukan pada presentation layer sesuai kebutuhan.
+
+Timestamp minimal:
+
+```text
+created_at
+updated_at
+```
+
+menggunakan timezone-aware representation.
+
+---
+
+# 110. Backup
+
+Production harus memiliki backup PostgreSQL.
+
+Backup harus mencakup data penting:
+
+* users;
+* orders;
+* templates;
+* invitations;
+* domains;
+* RSVP;
+* reviews;
+* audit data sesuai retention.
+
+Restore procedure harus dapat diuji.
+
+---
+
+# 111. Health Check
+
+```text
+GET /health/live
+```
+
+menentukan process hidup.
+
+```text
+GET /health/ready
+```
+
+minimal memastikan:
+
+```text
+application initialized
+database reachable
+critical dependency ready
+```
+
+---
+
+# 112. Graceful Shutdown
+
+Go server harus mendukung graceful shutdown.
+
+Ketika container dihentikan:
+
+```text
+stop accepting new work
+→ finish in-flight requests within timeout
+→ close database
+→ exit
+```
+
+---
+
+# 113. Non-Root Runtime
+
+Container production tidak boleh berjalan sebagai root kecuali terdapat alasan teknis yang terdokumentasi.
+
+Port aplikasi internal tidak harus 80/443.
+
+HTTPS ditangani reverse proxy.
+
+---
+
+# 114. Production Filesystem
+
+Container application harus dianggap ephemeral.
+
+Data bisnis utama tidak boleh bergantung pada filesystem container.
+
+Data persistent harus berada di storage yang memang persistent.
+
+PostgreSQL tetap menjadi persistence utama untuk structured application data.
+
+---
+
+# 115. Acceptance Criteria — Arsitektur
+
+Implementasi dianggap memenuhi SSOT apabila:
+
+1. production menggunakan satu Docker image aplikasi;
+2. image menjalankan satu Go binary;
+3. tidak ada Node.js production runtime;
+4. frontend production disajikan Go;
+5. Next.js hanya diperlukan di build/development;
+6. PostgreSQL tidak diakses frontend;
+7. Go adalah backend utama;
+8. tidak menggunakan microservices.
+
+---
+
+# 116. Acceptance Criteria — Template
+
+1. Admin dapat membuat template.
+2. Admin dapat membuat versi template.
+3. Admin dapat preview.
+4. Admin dapat publish.
+5. Template aktif tampil tanpa restart.
+6. Template tidak memerlukan Docker rebuild.
+7. Invitation memiliki snapshot/version.
+8. Update template tidak merusak invitation existing.
+9. User hanya mengubah section yang diizinkan.
+10. Template renderer aman.
+
+---
+
+# 117. Acceptance Criteria — Domain
+
+1. Admin dapat menambahkan hostname.
+2. Hostname unique.
+3. Sistem memberikan DNS instructions.
+4. Sistem dapat verify DNS.
+5. Sistem mengetahui status SSL.
+6. HTTPS diperlukan.
+7. Domain baru dapat aktif tanpa restart Go.
+8. Domain baru dapat aktif tanpa rebuild Docker.
+9. Host menentukan invitation.
+10. Unknown hostname ditolak.
+11. Custom domain tidak mengakses admin API.
+
+---
+
+# 118. Acceptance Criteria — User dan Auth
+
+1. Tidak ada self registration.
+2. Admin dapat membuat user.
+3. Session authentication berjalan.
+4. User hanya melihat resource miliknya.
+5. Admin dapat melihat resource platform.
+6. Backend menjalankan authorization.
+7. Session cookie secure.
+8. Logout/revocation bekerja.
+
+---
+
+# 119. Acceptance Criteria — Invitation
+
+1. Admin dapat membuat invitation.
+2. Invitation berasal dari template version.
+3. Snapshot dibuat.
+4. User dapat edit allowed fields.
+5. Preview tersedia.
+6. Domain harus active untuk publish.
+7. Periode aktif tervalidasi.
+8. Disabled/expired invitation tidak tampil normal.
+
+---
+
+# 120. Acceptance Criteria — RSVP
+
+1. Tamu tidak login.
+2. Tamu dapat RSVP jika aktif.
+3. Backend melakukan validation.
+4. Duplicate prevention berjalan.
+5. Rate limiting tersedia.
+6. User dapat filter/search.
+7. Statistik dihitung backend.
+8. Admin dapat memonitor.
+
+---
+
+# 121. Acceptance Criteria — Order
+
+1. User dapat memilih template.
+2. User dapat memilih paket.
+3. User dapat mengirim order.
+4. Admin dapat melihat pending order.
+5. Admin dapat accept/reject/process.
+6. Admin dapat melakukan data injection.
+7. Admin dapat preview.
+8. Admin dapat publish.
+9. Riwayat tersimpan.
+
+---
+
+# 122. Acceptance Criteria — Security
+
+1. Password hashing aman.
+2. CSRF protection tersedia.
+3. Host validation tersedia.
+4. Trusted proxy validation tersedia.
+5. SQL parameterized.
+6. Upload validation.
+7. Rate limiting.
+8. CSP/security headers.
+9. Secret tidak masuk frontend.
+10. Secret tidak masuk image.
+11. Private TLS key tidak masuk application DB.
+12. Audit log berfungsi.
+
+---
+
+# 123. Acceptance Criteria — Deployment
+
+CI/CD harus membuktikan:
+
+```text
+Go format/static analysis PASS
+Go test PASS
+Frontend lint PASS
+TypeScript PASS
+Frontend test PASS
+Frontend production build PASS
+Go embedded build PASS
+Docker build PASS
+Container startup PASS
+Health ready PASS
+```
+
+Production verification:
+
+```text
+single Go process PASS
+Node process absent PASS
+dynamic template PASS
+dynamic domain PASS
+RSVP PASS
+authorization PASS
+unknown hostname rejection PASS
+```
+
+---
+
+# 124. Urutan Implementasi
+
+Implementasi dilakukan dengan urutan:
+
+1. repository skeleton;
+2. configuration;
+3. PostgreSQL;
+4. migrations;
+5. users;
+6. authentication;
+7. sessions;
+8. authorization;
+9. landing;
+10. packages;
+11. templates;
+12. template versions;
+13. template renderer;
+14. orders;
+15. transactions;
+16. invitations;
+17. template snapshot;
+18. domain;
+19. hostname resolver;
+20. DNS verification;
+21. TLS/domain orchestration;
+22. public invitation context;
+23. RSVP;
+24. greetings;
+25. statistics;
+26. reviews;
+27. audit;
+28. frontend dashboard;
+29. frontend public UI;
+30. embedded frontend;
+31. Docker;
+32. observability;
+33. integration testing;
+34. end-to-end testing;
+35. security testing;
+36. production validation.
+
+---
+
+# 125. Sebelum Menulis Kode
+
+Harus dijelaskan terlebih dahulu:
+
+1. architecture;
+2. repository structure;
+3. database design;
+4. module boundaries;
+5. authentication flow;
+6. authorization flow;
+7. frontend embedding;
+8. template renderer;
+9. template versioning;
+10. invitation snapshot;
+11. hostname resolution;
+12. DNS verification;
+13. TLS provisioning;
+14. security;
+15. file list;
+16. migration list;
+17. API list;
+18. test strategy.
+
+---
+
+# 126. Saat Implementasi
+
+Wajib:
+
+* modular;
+* consistent naming;
+* transaction;
+* migration;
+* validation;
+* authorization;
+* tests;
+* structured errors;
+* no mock as final implementation;
+* no TODO untuk core feature.
+
+Tidak boleh mengubah requirement secara diam-diam.
+
+---
+
+# 127. Setelah Implementasi
+
+Jalankan:
+
+```text
+gofmt
+go vet/static analysis
+go test
+frontend lint
+TypeScript check
+frontend tests
+frontend production build
+Go embedded build
+Docker build
+migration test
+integration test
+E2E
+multi-host verification
+template runtime deployment test
+domain runtime provisioning test
+RSVP verification
+authorization verification
+security verification
+```
+
+---
+
+# 128. Hal yang Secara Eksplisit Dilarang
+
+Tidak boleh:
+
+```text
+Next.js mengakses PostgreSQL
+Node.js menjadi backend production
+Node.js berjalan di application container production
+template baru membutuhkan rebuild secara normal
+domain baru membutuhkan app restart
+domain hardcoded di source
+invitation public ditentukan dari invitation_id browser
+authorization hanya di frontend
+unknown hostname menuju default invitation
+secret masuk frontend
+private TLS key masuk PostgreSQL application data
+microservices tanpa perubahan SSOT
+self registration
+```
+
+---
+
+# 129. Definisi “Deploy Template”
+
+Dalam GolanInvite:
+
+```text
+Deploy Template
+=
+Publish runtime template version
+```
+
+Bukan:
+
+```text
+Build application
+```
+
+---
+
+# 130. Definisi “Set Domain”
+
+Dalam GolanInvite:
+
+```text
+Set Domain
+=
+Create domain record
++
+configure DNS
++
+verify DNS
++
+provision TLS
++
+activate hostname
+```
+
+Bukan:
+
+```text
+change source code
+```
+
+---
+
+# 131. Definisi “Deploy Application”
+
+Deploy aplikasi berarti mengganti artifact aplikasi:
+
+```text
+new Go binary
++
+new embedded frontend assets
+```
+
+Ini memerlukan:
+
+```text
+Docker image baru
+```
+
+dan rolling/replacement container deployment.
+
+---
+
+# 132. Kontrak Utama No-Restart
+
+Requirement final:
+
+> Admin harus dapat menambahkan dan mempublikasikan template baru tanpa restart aplikasi.
+
+Requirement final:
+
+> Admin harus dapat menambahkan, memverifikasi, dan mengaktifkan custom domain baru tanpa restart aplikasi.
+
+Requirement final:
+
+> Perubahan data invitation, RSVP, landing page, paket, order, user, dan review tidak boleh membutuhkan rebuild Docker image.
+
+---
+
+# 133. Arsitektur Final GolanInvite
+
+```text
+                        INTERNET
+                           │
+                           ▼
+               ┌──────────────────────┐
+               │ Reverse Proxy / TLS  │
+               │ Dynamic Domains      │
+               │ Automatic HTTPS      │
+               └──────────┬───────────┘
+                          │
+                          │ original Host
+                          ▼
+          ┌──────────────────────────────────┐
+          │ GolanInvite Application          │
+          │                                  │
+          │ ONE DOCKER IMAGE                 │
+          │ ONE GO BINARY                    │
+          │                                  │
+          │ ┌──────────────────────────────┐ │
+          │ │ Embedded Frontend           │ │
+          │ │ Built using Next.js         │ │
+          │ └──────────────────────────────┘ │
+          │                                  │
+          │ REST API                         │
+          │ Auth / Authorization             │
+          │ Landing / Packages               │
+          │ Orders / Transactions            │
+          │ Template Runtime                 │
+          │ Invitation Runtime               │
+          │ Hostname Resolver                │
+          │ RSVP / Greetings                 │
+          │ Reviews / Statistics             │
+          │ Audit / Security                 │
+          └────────────────┬─────────────────┘
+                           │
+                           ▼
+                     ┌────────────┐
+                     │ PostgreSQL │
+                     └────────────┘
+```
+
+---
+
+# 134. Development
+
+```text
+Next.js dev server
++
+Go API
++
+PostgreSQL
+```
+
+---
+
+# 135. Production
+
+```text
+Reverse Proxy / HTTPS
+        │
+        ▼
+Single GolanInvite Docker Image
+        │
+        ▼
+Single Go Binary
+        │
+        ├── Embedded Frontend
+        ├── REST API
+        └── Runtime Host Resolver
+        │
+        ▼
+PostgreSQL
+```
+
+Node.js tidak berjalan di production.
+
+---
+
+# 136. Prinsip Final
+
+```text
+Next.js
+=
+frontend development/build framework
+
+Go
+=
+production application runtime
+REST API
+business logic
+authentication
+authorization
+hostname resolver
+template/invitation runtime
+RSVP
+statistics
+audit
+
+PostgreSQL
+=
+persistent application data
+
+Template
+=
+versioned runtime data/configuration
+
+Domain
+=
+runtime hostname configuration
+
+Docker image
+=
+application code artifact
+
+Template publish
+≠
+application deployment
+
+Domain provisioning
+≠
+application deployment
+```
+
+---
+
+# 137. Keputusan Akhir
+
+GolanInvite harus menghasilkan architecture dengan karakteristik:
+
+```text
+1 product
+1 modular monolith
+1 backend
+1 PostgreSQL database
+1 application Docker image
+1 production Go process
+0 Node.js runtime
+dynamic templates
+dynamic invitation domains
+automatic HTTPS
+no restart for business data changes
+```
+
+Semua implementasi selanjutnya harus mengikuti prinsip tersebut.
+
+---
+
+# 138. Ketentuan Perubahan SSOT
+
+Apabila di masa depan diperlukan:
+
+* SSR server-side Next.js;
+* Server Actions production;
+* Node.js runtime;
+* microservices;
+* Redis;
+* message queue;
+* dedicated object storage;
+* worker terpisah;
+* Kubernetes-specific architecture;
+* external template execution runtime;
+
+maka perubahan tersebut **bukan implementasi minor**.
+
+Harus dilakukan:
+
+```text
+proposal
+→ alasan
+→ manfaat
+→ risiko
+→ security impact
+→ operational impact
+→ deployment impact
+→ update SSOT
+→ baru implementasi
+```
+
+Tidak boleh dimasukkan secara diam-diam.
+
+---
+
+# 139. Penutup
+
+Dokumen ini menjadi SSOT final GolanInvite untuk:
+
+* Landing Page Guest;
+* Dashboard Admin;
+* Dashboard User;
+* Katalog;
+* Paket;
+* Pemesanan;
+* Transaksi;
+* Template;
+* Template Version;
+* Data Injection;
+* Invitation;
+* Custom Domain;
+* DNS;
+* SSL;
+* RSVP;
+* Ucapan;
+* Statistik;
+* Ulasan;
+* Security;
+* Docker;
+* Deployment;
+* Runtime.
+
+Target production akhir:
+
+```text
+                GolanInvite
+                     │
+        ┌────────────┴────────────┐
+        │                         │
+ Dynamic Business Data      Application Code
+        │                         │
+        ▼                         ▼
+NO RESTART REQUIRED       BUILD + DEPLOY
+```
+
+Dengan demikian:
+
+```text
+Tambah Template
+→ NO RESTART
+
+Publish Template
+→ NO RESTART
+
+Tambah Domain
+→ NO RESTART
+
+Verify DNS
+→ NO RESTART
+
+Provision SSL
+→ NO APPLICATION RESTART
+
+Activate Domain
+→ NO RESTART
+
+Edit Invitation
+→ NO RESTART
+
+RSVP
+→ NO RESTART
+
+Ubah Source Code
+→ BUILD + DEPLOY
+```
+
+**Dokumen ini menggantikan ketentuan arsitektur sebelumnya yang bertentangan dengan model production single Go binary.**

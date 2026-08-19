@@ -1,0 +1,4 @@
+DROP TABLE IF EXISTS reviews;
+DROP TABLE IF EXISTS templates;
+DROP TABLE IF EXISTS landing_sections;
+DROP TABLE IF EXISTS packages;
